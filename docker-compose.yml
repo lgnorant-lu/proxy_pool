@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  redis:
+    image: redis
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  proxy_pool:
+    build: ../../../Coding/Docker
+    container_name: proxy_pool
+    ports:
+      - "5000:5000"
+    depends_on:
+      - redis
