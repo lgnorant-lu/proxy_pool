@@ -1,2 +1,2 @@
 # proxy_pool
- 代理池
+ 代理池, 修 bug ing...
