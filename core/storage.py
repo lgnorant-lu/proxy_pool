@@ -10,7 +10,7 @@ Changed history:            重构 Redis 存储逻辑,增强代理存储管理
 ----------------------------------------------------------------
 """
 
-import redis
+import aioredis
 from typing import Optional, Union, List
 import random
 
@@ -43,13 +43,13 @@ class RedisProxyClient:
         self._logger = setup_logger()
 
         try:
-            self.db = redis.Redis(
+            self.db = aioredis.Redis(
                 host=config.REDIS_HOST,
                 port=config.REDIS_PORT,
                 password=config.REDIS_PASSWORD,
                 decode_responses=True,
             )
-        except redis.ConnectionError as e:
+        except aioredis.ConnectionError as e:
             self._logger.error(f"Redis连接失败: {e}")
             raise ProxyPoolError(f"Redis连接失败: {e}")
 
@@ -74,9 +74,9 @@ class RedisProxyClient:
                 proxy_score = score or self._config.INITIAL_SCORE
 
             # 防止重复添加
-            if not self.db.zscore(self._config.REDIS_KEY, proxy_key):
+            if not await self.db.zscore(self._config.REDIS_KEY, proxy_key):
                 return bool(
-                    self.db.zadd(self._config.REDIS_KEY, {proxy_key: proxy_score})
+                    await self.db.zadd(self._config.REDIS_KEY, {proxy_key: proxy_score})
                 )
             return False
         except Exception as e:
@@ -128,7 +128,7 @@ class RedisProxyClient:
             self._logger.error(f"更新代理 {proxy} 评分失败: {e}")
             return False
 
-    def random_proxy(self, min_score: Optional[float] = None) -> Optional[str]:
+    async def random_proxy(self, min_score: Optional[float] = None) -> Optional[str]:
         """
         随机获取一个代理
 
@@ -142,7 +142,7 @@ class RedisProxyClient:
             min_score = min_score or self._config.MIN_SCORE
 
             # 获取符合评分要求的代理
-            proxies = self.db.zrangebyscore(
+            proxies = await self.db.zrangebyscore(
                 self._config.REDIS_KEY, min_score, float("inf"), withscores=False
             )
 
@@ -151,7 +151,7 @@ class RedisProxyClient:
             self._logger.error(f"随机获取代理失败: {e}")
             return None
 
-    def get_all_proxies(self) -> List[str]:
+    async def get_all_proxies(self) -> List[str]:
         """
         获取所有代理
 
@@ -159,12 +159,12 @@ class RedisProxyClient:
             所有代理地址列表
         """
         try:
-            return self.db.zrange(self._config.REDIS_KEY, 0, -1)
+            return await self.db.zrange(self._config.REDIS_KEY, 0, -1)
         except Exception as e:
             self._logger.error(f"获取所有代理失败: {e}")
             return []
 
-    def get_proxy_count(self) -> int:
+    async def get_proxy_count(self) -> int:
         """
         获取代理总数
 
@@ -172,12 +172,12 @@ class RedisProxyClient:
             代理总数
         """
         try:
-            return self.db.zcard(self._config.REDIS_KEY)
+            return await self.db.zcard(self._config.REDIS_KEY)
         except Exception as e:
             self._logger.error(f"获取代理总数失败: {e}")
             return 0
 
-    def get_proxies_by_score_range(
+    async def get_proxies_by_score_range(
         self, min_score: float, max_score: float
     ) -> List[str]:
         """
@@ -191,7 +191,7 @@ class RedisProxyClient:
             符合评分范围的代理列表
         """
         try:
-            return self.db.zrangebyscore(self._config.REDIS_KEY, min_score, max_score)
+            return await self.db.zrangebyscore(self._config.REDIS_KEY, min_score, max_score)
         except Exception as e:
             self._logger.error(f"获取评分范围代理失败: {e}")
             return []
