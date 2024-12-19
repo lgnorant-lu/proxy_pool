@@ -10,7 +10,10 @@ Changed history:            重构 Redis 存储逻辑,增强代理存储管理
 ----------------------------------------------------------------
 """
 
-import aioredis
+# import aioredis  # 3.11 兼容 bug
+import redis
+import asyncio  # 结合 redis 实现同 aioreis 的异步功能
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Union, List
 import random
 
@@ -43,15 +46,32 @@ class RedisProxyClient:
         self._logger = setup_logger()
 
         try:
-            self.db = aioredis.Redis(
+            # 同步的 redis 连接创建
+            self.db = redis.StrictRedis(
                 host=config.REDIS_HOST,
                 port=config.REDIS_PORT,
                 password=config.REDIS_PASSWORD,
                 decode_responses=True,
             )
-        except aioredis.ConnectionError as e:
+            # 线程池处理同步的 redis 操作
+            self.executor = ThreadPoolExecutor()
+        except redis.ConnectionError as e:
             self._logger.error(f"Redis连接失败: {e}")
             raise ProxyPoolError(f"Redis连接失败: {e}")
+
+    async def _run_sync(self, func, *args):
+        """
+        使用线程池执行同步 Redis 操作
+
+        Args:
+            func: Redis 操作函数
+            *args: 函数参数
+
+        Return:
+            调用 Redis 操作作函数返回值
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self.executor, func, *args)
 
     async def add(self, proxy: Union[str, ProxyModel], score: Optional[float] = None) -> bool:
         """
@@ -74,9 +94,9 @@ class RedisProxyClient:
                 proxy_score = score or self._config.INITIAL_SCORE
 
             # 防止重复添加
-            if not await self.db.zscore(self._config.REDIS_KEY, proxy_key):
+            if not await self._run_sync(self.db.zscore, self._config.REDIS_KEY, proxy_key):
                 return bool(
-                    await self.db.zadd(self._config.REDIS_KEY, {proxy_key: proxy_score})
+                    await self._run_sync(self.db.zadd, self._config.REDIS_KEY, {proxy_key: proxy_score})
                 )
             return False
         except Exception as e:
@@ -96,7 +116,7 @@ class RedisProxyClient:
         try:
             proxy_key = proxy if isinstance(proxy, str) else f"{proxy.ip}:{proxy.port}"
 
-            result = self.db.zrem(self._config.REDIS_KEY, proxy_key)
+            result = self._run_sync(self.db.zrem, self._config.REDIS_KEY, proxy_key)
             return bool(result)
         except Exception as e:
             self._logger.error(f"移除代理 {proxy} 失败: {e}")
@@ -123,7 +143,7 @@ class RedisProxyClient:
                 proxy_key = proxy
                 proxy_score = score or self._config.INITIAL_SCORE
 
-            return bool(self.db.zadd(self._config.REDIS_KEY, {proxy_key: proxy_score}))
+            return bool(self._run_sync(self.db.zadd, self._config.REDIS_KEY, {proxy_key: proxy_score}))
         except Exception as e:
             self._logger.error(f"更新代理 {proxy} 评分失败: {e}")
             return False
@@ -142,8 +162,12 @@ class RedisProxyClient:
             min_score = min_score or self._config.MIN_SCORE
 
             # 获取符合评分要求的代理
-            proxies = await self.db.zrangebyscore(
-                self._config.REDIS_KEY, min_score, float("inf"), withscores=False
+            proxies = await self._run_sync(
+                self.db.zrangebyscore,
+                self._config.REDIS_KEY,
+                min_score,
+                float("inf"),
+                withscores=False
             )
 
             return random.choice(proxies) if proxies else None
@@ -159,7 +183,7 @@ class RedisProxyClient:
             所有代理地址列表
         """
         try:
-            return await self.db.zrange(self._config.REDIS_KEY, 0, -1)
+            return await self._run_sync(self.db.zrange, self._config.REDIS_KEY, 0, -1)
         except Exception as e:
             self._logger.error(f"获取所有代理失败: {e}")
             return []
@@ -172,7 +196,7 @@ class RedisProxyClient:
             代理总数
         """
         try:
-            return await self.db.zcard(self._config.REDIS_KEY)
+            return await self._run_sync(self.db.zcard, self._config.REDIS_KEY)
         except Exception as e:
             self._logger.error(f"获取代理总数失败: {e}")
             return 0
@@ -191,7 +215,7 @@ class RedisProxyClient:
             符合评分范围的代理列表
         """
         try:
-            return await self.db.zrangebyscore(self._config.REDIS_KEY, min_score, max_score)
+            return await self._run_sync(self.db.zrangebyscore, self._config.REDIS_KEY, min_score, max_score)
         except Exception as e:
             self._logger.error(f"获取评分范围代理失败: {e}")
             return []
