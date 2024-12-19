@@ -4,13 +4,13 @@ from typing import List
 
 from loguru import logger
 
-from core.fetcher import ProxyFetcher
-from core.validator import ProxyValidator
-from core.storage import RedisProxyClient
-from core.cleaner import ProxyCleaner
-from models.proxy_model import ProxyModel
-from utils.config import get_config
-from utils.logger import setup_logger
+from .core.fetcher import ProxyFetcher
+from .core.validator import ProxyValidator
+from .core.storage import RedisProxyClient
+from .core.cleaner import ProxyCleaner
+from .models.proxy_model import ProxyModel
+from .utils.config import get_config
+from .utils.logger import setup_logger
 
 
 class ProxyPoolApplication:
@@ -32,14 +32,14 @@ class ProxyPoolApplication:
                 logger.info(f"获取原始代理 {len(raw_proxies)} 个")
 
                 # 2. 验证代理
-                valid_proxies: List[ProxyModel] = await self.validator.validate(raw_proxies)
+                valid_proxies: List[ProxyModel] = await self.validator.validate_proxy(raw_proxies)
                 logger.info(f"验证通过代理 {len(valid_proxies)} 个")
 
                 # 3. 存储代理
-                await self.storage.save(valid_proxies)
+                await self.storage.add(valid_proxies)
 
                 # 4. 清理无效代理
-                await self.cleaner.clean()
+                await self.cleaner.clean_invalid_proxies()
 
                 # 等待下一次循环
                 await asyncio.sleep(self.config.fetch_interval)
@@ -81,7 +81,7 @@ async def start_api_server(port):
     @app.get("/proxies")
     async def get_proxies(count: int = 10):
         storage = RedisProxyClient()
-        return await storage.get(count)
+        return await storage.random_proxy(count)
 
     config = uvicorn.Config(app, host="0.0.0.0", port=port)
     server = uvicorn.Server(config)
@@ -108,9 +108,9 @@ async def main():
         # 仅验证
         validator = ProxyValidator()
         storage = RedisProxyClient()
-        proxies = await storage.get_all()
-        valid_proxies = await validator.validate(proxies)
-        await storage.save(valid_proxies)
+        proxies = await storage.get_all_proxies()
+        valid_proxies = await validator.validate_proxy(proxies)
+        await storage.add(valid_proxies)
         logger.info(f"验证有效代理 {len(valid_proxies)} 个")
 
     elif args.mode == 'serve':

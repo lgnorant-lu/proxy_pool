@@ -53,7 +53,7 @@ class RedisProxyClient:
             self._logger.error(f"Redis连接失败: {e}")
             raise ProxyPoolError(f"Redis连接失败: {e}")
 
-    def add(self, proxy: Union[str, ProxyModel], score: Optional[float] = None) -> bool:
+    async def add(self, proxy: Union[str, ProxyModel], score: Optional[float] = None) -> bool:
         """
         添加代理到代理池
 

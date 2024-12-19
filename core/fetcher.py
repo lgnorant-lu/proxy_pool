@@ -105,7 +105,7 @@ class ProxyFetcher:
         except Exception as e:
             self.logger.error(f"58 代理获取失败: {e}")
 
-    def fetch_proxies(self) -> List[ProxyModel]:
+    async def fetch_proxies(self) -> List[ProxyModel]:
         """
         获取所有代理源的代理
 
@@ -125,11 +125,11 @@ class ProxyFetcher:
         for method in proxy_methods:
             try:
                 proxies = list(method())
-                all_proxies.extend(proxies)
+                await all_proxies.extend(proxies)
             except Exception as e:
                 self.logger.error(f"代理获取方法 {method.__name__} 失败: {e}")
 
-        # 转换为ProxyModel
+        # 转换为 ProxyModel
         proxy_models = self._parse_proxy_list(all_proxies)
 
         self.logger.info(f"获取代理 {len(proxy_models)} 个")
