@@ -14,13 +14,14 @@ Changed history:            重构 Redis 存储逻辑,增强代理存储管理
 import redis
 import asyncio  # 结合 redis 实现同 aioreis 的异步功能
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Union, List
+from contextlib import contextmanager
+from typing import Optional, Union, List, Dict
 import random
 
-from ..utils.config import ProxyConfig
-from ..utils.exceptions import ProxyPoolError
-from ..utils.logger import setup_logger
-from ..models.proxy_model import ProxyModel
+from proxy_pool.utils.config import ProxyConfig
+from proxy_pool.utils.exceptions import ProxyPoolError
+from proxy_pool.utils.logger import setup_logger
+from proxy_pool.models.proxy_model import ProxyModel
 
 
 class RedisProxyClient:
@@ -156,7 +157,7 @@ class RedisProxyClient:
             min_score: 最低评分要求
 
         Returns:
-            代理地址或None
+            代理地址或 None
         """
         try:
             min_score = min_score or self._config.MIN_SCORE
@@ -167,7 +168,6 @@ class RedisProxyClient:
                 self._config.REDIS_KEY,
                 min_score,
                 float("inf"),
-                withscores=False
             )
 
             return random.choice(proxies) if proxies else None

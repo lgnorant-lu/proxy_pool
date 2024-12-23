@@ -7,11 +7,19 @@ Description:                代理池系统配置管理模块
 ----------------------------------------------------------------
 
 Changed history:            初始化配置文件,定义系统全局配置
+                            2024/12/24: 增加环境变量支持和配置验证
 ----------------------------------------------------------------
 """
 
-from dataclasses import dataclass
-from typing import Optional
+import os
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any
+from pathlib import Path
+import json
+import yaml
+
+from proxy_pool.utils.exceptions import ConfigError
+from proxy_pool.utils.logger import setup_logger
 
 
 @dataclass

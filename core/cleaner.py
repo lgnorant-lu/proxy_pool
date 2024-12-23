@@ -11,14 +11,14 @@ Changed history:            代理清理模块: 定期清理废弃代理
 """
 
 import asyncio
-import time
-from typing import List, Optional
+# import time
+from typing import Optional
 
 from ..utils.logger import setup_logger
 from .storage import RedisProxyClient
 from .validator import ProxyValidator
-from ..models.proxy_model import ProxyModel
 from ..utils.config import ProxyConfig
+from .fetcher import ProxyFetcher
 
 
 class ProxyCleaner:
@@ -32,6 +32,7 @@ class ProxyCleaner:
         self.logger = setup_logger()
         self.storage = storage or RedisProxyClient(config)
         self.validator = validator or ProxyValidator(config)
+        self.fetcher = ProxyFetcher()
 
     async def clean_invalid_proxies(self) -> int:
         """
@@ -41,22 +42,21 @@ class ProxyCleaner:
             清理的代理数量
         """
         try:
-            # 获取所有代理
-            all_proxies = self.storage.get_all_proxies()
-            invalid_proxies = []
+            # 获取所有代理, 加上 await 处理异步方法
+            all_proxies_str = await self.storage.get_all_proxies()
 
-            # 并发验证代理
-            for proxy_str in all_proxies:
-                ip, port = proxy_str.split(':')
-                proxy = ProxyModel(ip=ip, port=int(port))
+            # 转换 str 列表为 ProxyModel 列表
+            all_proxies = self.fetcher.parse_proxy_list(all_proxies_str)
 
-                is_valid = await self.validator.validate_proxy(proxy)
-                if not is_valid:
-                    invalid_proxies.append(proxy_str)
+            # 代理有效性验证, 有效代理获取
+            valid_proxies = await self.validator.validate_proxy(all_proxies)
+
+            # 无效代理差集获取
+            invalid_proxies = [proxy for proxy in all_proxies if proxy not in valid_proxies]
 
             # 批量移除无效代理
             for proxy in invalid_proxies:
-                self.storage.remove(proxy)
+                await self.storage.remove(proxy)
 
             self.logger.info(f"清理无效代理 {len(invalid_proxies)} 个")
             return len(invalid_proxies)
