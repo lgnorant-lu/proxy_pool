@@ -1,6 +1,6 @@
 """
 ----------------------------------------------------------------
-File name:                  storage.py
+File name:                  web_request.py
 Author:                     Ignorant-lu
 Date created:               2024/12/17
 Description:                网络请求模块
