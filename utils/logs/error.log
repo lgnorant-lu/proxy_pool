@@ -1,0 +1,2 @@
+{"timestamp": "2024-12-24T05:28:37.881660", "level": "ERROR", "message": "这是一条错误日志 [ERROR]", "module": "logger", "function": "_log", "line": 172}
+{"timestamp": "2024-12-24T05:28:37.882645", "level": "CRITICAL", "message": "这是一条严重错误日志 [CRITICAL]", "module": "logger", "function": "_log", "line": 172}

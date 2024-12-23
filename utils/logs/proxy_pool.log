@@ -1,0 +1,5 @@
+{"timestamp": "2024-12-24T05:28:37.880643", "level": "DEBUG", "message": "这是一条调试日志 [DEBUG]", "module": "logger", "function": "_log", "line": 172}
+{"timestamp": "2024-12-24T05:28:37.881660", "level": "INFO", "message": "这是一条信息日志 [INFO]", "module": "logger", "function": "_log", "line": 172}
+{"timestamp": "2024-12-24T05:28:37.881660", "level": "WARNING", "message": "这是一条警告日志 [WARNING]", "module": "logger", "function": "_log", "line": 172}
+{"timestamp": "2024-12-24T05:28:37.881660", "level": "ERROR", "message": "这是一条错误日志 [ERROR]", "module": "logger", "function": "_log", "line": 172}
+{"timestamp": "2024-12-24T05:28:37.882645", "level": "CRITICAL", "message": "这是一条严重错误日志 [CRITICAL]", "module": "logger", "function": "_log", "line": 172}
