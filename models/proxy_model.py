@@ -7,14 +7,34 @@ Description:                代理模型定义模块
 ----------------------------------------------------------------
 
 Changed history:            定义代理模型,包含统计特征
+                            2024/12/25: 增加性能评分和状态管理
 ----------------------------------------------------------------
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
-from datetime import datetime
+from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta
 import ipaddress
 import json
+from enum import Enum
+
+
+class ProxyStatus(Enum):
+    """ 代理状态枚举 """
+    UNKNOWN = "unknown"  # 沃尔玛购物袋
+    ACTIVE = "active"  # 上房揭瓦
+    UNSTABLE = "unstable"  # 绝命毒师
+    FAILED = "failed"  # 半拉柯基
+    BANNED = "banned"  # 66
+
+
+class ProxyAnonymity(Enum):
+    """ 代理匿名度枚举 """
+    TRANSPARENT = "transparent"  # 透理
+    ANONYMOUS = "anonymous"  # 普匿
+    HIGH = "high"  # 高匿
+    ELITE = "elite"  # 精理
+    UNKNOWN = "unknown"  # 未知
 
 
 @dataclass
@@ -41,13 +61,22 @@ class ProxyModel:
     consecutive_failed_times: int = 0
     total_requests: int = 0
     location: Optional[str] = None
-    anonymity: Optional[str] = None
+    anonymity: ProxyAnonymity = ProxyAnonymity.UNKNOWN
     last_status_code: Optional[int] = None
     tags: Dict[str, Any] = field(default_factory=dict)
+    status: ProxyStatus = ProxyStatus.UNKNOWN
+    created_time: datetime = field(default_factory=datetime.now)
+    last_success_time: Optional[datetime] = None
+    response_times: List[float] = field(default_factory=list)
+    max_response_times: int = 100  # 保存最近 100 次响应时间
 
     def __post_init__(self):
-        """验证初始化参数"""
+        """ 验证初始化参数 """
         self.validate()
+        if isinstance(self.anonymity, str):
+            self.anonymity = ProxyAnonymity(self.anonymity)
+        if isinstance(self.status, str):
+            self.status = ProxyStatus(self.status)
 
     def validate(self) -> None:
         """
@@ -111,6 +140,51 @@ class ProxyModel:
         # 更新最后检查时间
         self.last_check_time = datetime.now()
 
+    def _update_status(self, is_success: bool) -> None:
+        """
+        更新代理状态
+
+        Args:
+            is_success: 请求是否成功
+        """
+        if is_success:
+            if self.success_rate >= 0.8:
+                self.status = ProxyStatus.ACTIVE
+            elif self.success_rate >= 0.5:
+                self.status = ProxyStatus.UNSTABLE
+        else:
+            if self.consecutive_failed_times >= 5:
+                self.status = ProxyStatus.FAILED
+            elif self.success_rate < 0.3:
+                self.status = ProxyStatus.UNSTABLE
+
+    def get_score(self) -> float:
+        """
+        计算代理的性能评分 (0-100)
+
+        Returns:
+            float: 性能评分
+        """
+        if self.total_requests == 0:
+            return 0.0
+
+            # 基础分数 (40分)
+        base_score = 40.0 * self.success_rate
+
+        # 响应时间分数 (30分)
+        response_score = 30.0 * (1.0 - min(self.avg_response_time / 10.0, 1.0))
+
+        # 稳定性分数 (20分)
+        stability_score = 20.0 * (1 - self.consecutive_failed_times / 5.0)
+
+        # 时效性分数 (10分)
+        time_score = 10.0
+        if self.last_success_time:
+            hours_since_success = (datetime.now() - self.last_success_time).total_seconds() / 3600.0
+            time_score *= max(0.0, 1.0 - hours_since_success / 24.0)  # 24小时内递减
+
+        return min(100.0, max(0.0, base_score + response_score + stability_score + time_score))
+
     def is_valid(self) -> bool:
         """
         检查代理是否仍然有效
@@ -118,12 +192,12 @@ class ProxyModel:
         Returns:
             bool: 代理是否有效
         """
-        # 阈值设置
+        score = self.get_score()
         return (
-            self.success_rate >= 0.3
-            and self.consecutive_failed_times <= 5
-            and self.avg_response_time < 10.0
-            # and self.total_requests >= 100
+            score >= 60  # 综合评分大于60
+            and self.status != ProxyStatus.FAILED
+            and self.status != ProxyStatus.BANNED
+            and (datetime.now() - self.last_check_time) < timedelta(hours=1)  # 1小时内检查过
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -133,7 +207,7 @@ class ProxyModel:
         Returns:
             Dict: 代理信息字典
         """
-        return {
+        data = {
             "ip": self.ip,
             "port": self.port,
             "source": self.source,
@@ -144,10 +218,19 @@ class ProxyModel:
             "consecutive_failed_times": self.consecutive_failed_times,
             "total_requests": self.total_requests,
             "location": self.location,
-            "anonymity": self.anonymity,
+            "anonymity": self.anonymity.value,
             "last_status_code": self.last_status_code,
             "tags": self.tags,
+            "status": self.status.value,
+            "created_time": self.created_time.isoformat(),
+            "last_success_time": self.last_success_time.isoformat() if self.last_success_time else None,  #
+            "score": self.get_score(),  #
+            "response_times": self.response_times,
+            "max_response_times": self.max_response_times,
         }
+        if self.last_success_time:
+            data['response_times'] = self.last_success_time.isoformat()
+        return data
 
     def to_json(self) -> str:
         """
@@ -169,24 +252,36 @@ class ProxyModel:
         Returns:
             ProxyModel: 新的代理对象
         """
-        # 处理 datetime 字段
-        if 'last_check_time' in data:
-            data['last_check_time'] = datetime.fromisoformat(data['last_check_time'])
+        # 创建数据副本，避免修改原始数据
+        data = data.copy()
 
+        # 处理 datetime 字段
+        for datetime_field in ['last_check_time', 'created_time']:
+            if datetime_field in data and isinstance(data[datetime_field], str):
+                data[datetime_field] = datetime.fromisoformat(data[datetime_field])
+
+        if 'last_success_time' in data and data['last_success_time']:
+            data['last_success_time'] = datetime.fromisoformat(data['last_success_time'])
+
+        # 移除不需要的字段
+        for extra_field in ['score']:
+            data.pop(extra_field, None)
+
+        # 创建新实例
         return cls(**data)
 
     @classmethod
-    def from_json(cls, json_str: str) -> "ProxyModel":
+    def from_json(cls, json_data: str) -> "ProxyModel":
         """
         从 JSON 创建代理对象
 
         Args:
-            json_str: 代理信息 JSON
+            json_data: 代理信息 JSON
 
         Returns:
             ProxyModel: 新的代理对象
         """
-        return cls.from_dict(json.loads(json_str))
+        return cls.from_dict(json.loads(json_data))
 
     def __str__(self) -> str:
         """
@@ -234,25 +329,46 @@ class ProxyModel:
 
 
 if __name__ == '__main__':
-    # 测试用例
-    proxy = ProxyModel(
-        ip="192.168.1.1",
-        port=8080,
-        source="test",
-        tags={"type": "http", "country": "CN"}
-    )
+    try:
+        print("=== 创建代理实例 ===")
+        proxy = ProxyModel(
+            ip="220.248.70.237",
+            port=9002,
+            source="test",
+            tags={"type": "http", "country": "CN"}
+        )
 
-    # 测试更新统计
-    proxy.update_stats(True, 0.5, 200)
-    proxy.update_stats(False, 1.0, 404)
+        print("\n=== 模拟请求更新 ===")
+        # 模拟一系列请求
+        proxy.update_stats(True, 0.5, 200)
+        proxy.update_stats(True, 0.8, 200)
+        proxy.update_stats(False, 2.0, 404)
+        proxy.update_stats(True, 0.6, 200)
 
-    # 测试序列化
-    proxy_dict = proxy.to_dict()
-    proxy_json = proxy.to_json()
+        print("\n=== 代理状态 ===")
+        print(f"Proxy: {proxy}")
+        print(f"Score: {proxy.get_score():.2f}")
+        print(f"Status: {proxy.status.value}")
+        print(f"Valid: {proxy.is_valid()}")
+        print(f"Average Response Time: {proxy.avg_response_time:.2f}s")
 
-    # 测试反序列化
-    new_proxy = ProxyModel.from_json(proxy_json)
+        print("\n=== 序列化测试 ===")
+        # 测试序列化
+        json_str = proxy.to_json()
+        print("JSON representation:")
+        print(json_str)
 
-    print(f"Original proxy: {proxy}")
-    print(f"Deserialized proxy: {new_proxy}")
-    print(f"Equal?: {proxy == new_proxy}")
+        print("\n=== 反序列化测试 ===")
+        # 测试反序列化
+        new_proxy = ProxyModel.from_json(json_str)
+        print("Deserialized proxy:")
+        print(new_proxy)
+
+        print("\n=== 对象比较 ===")
+        print(f"Original proxy: {proxy}")
+        print(f"Deserialized proxy: {new_proxy}")
+        print(f"Equal?: {proxy == new_proxy}")
+
+    except Exception as e:
+        print(f"\n发生错误: {type(e).__name__}")
+        print(f"错误信息: {str(e)}")
