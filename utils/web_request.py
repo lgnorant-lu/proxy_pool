@@ -8,22 +8,33 @@ Description:                网络请求模块
 
 Changed history:            网络请求模块: 代理源
                             2024/12/24: 异常处理部分优化
+                            2024/12/25: 添加重试机制和响应处理优化
 ----------------------------------------------------------------
 """
 
 import aiohttp
+# import asyncio
 from aiohttp import ClientTimeout, TCPConnector
 from lxml import etree
-from typing import Optional, Any, Union
+from typing import Optional, Any, Union, Callable
 from proxy_pool.utils.logger import setup_logger
+from proxy_pool.utils.exceptions import RequestError
 
 
 class WebRequest:
     """
     网络请求模块， aiohttp 异步实现
+
+    功能：
+    1. 异步HTTP请求
+    2. 自动重试机制
+    3. 代理支持
+    4. HTML解析
+    5. 异步上下文管理
     """
 
     def __init__(self):
+        """ 初始化 WebRequest 实例 """
         self.logger = setup_logger()
         self._session = None
         self.default_headers = {
@@ -42,6 +53,9 @@ class WebRequest:
     def _get_session(self) -> aiohttp.ClientSession:
         """
         获取 / 创建 session
+
+        Returns:
+            aiohttp.ClientSession: 会话实例
         """
         if self._session is None or self._session.closed:
             connector = TCPConnector(
@@ -53,6 +67,120 @@ class WebRequest:
             self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
+    @staticmethod
+    def _get_timeout(timeout: Union[float, ClientTimeout]) -> ClientTimeout:
+        """
+        获取请求超时设置
+
+        Args:
+            timeout: 超时时间 / 超时配置对象
+
+        Returns:
+            ClientTimeout: aiohttp 超时配置对象
+        """
+        if isinstance(timeout, (int, float)):
+            return ClientTimeout(
+                total=float(timeout),
+                connect=min(timeout * 0.2, 5),  # 连接超时
+                sock_connect=min(timeout * 0.2, 5),  # Socket 连接超时
+                sock_read=timeout,  # 读取超市
+            )
+        return timeout
+
+    async def _process_response(
+        self,
+        response: aiohttp.ClientResponse,
+        url: str,
+    ) -> Optional[Any]:
+        """
+        处理HTTP响应
+
+        Args:
+            response: aiohttp响应对象
+            url: 请求URL
+
+        Returns:
+            Optional[Any]: 处理后的响应数据
+
+        Raises:
+            RequestError: 响应处理失败
+        """
+        if response.status >= 400:
+            self.logger.warning(
+                f"请求失败: {url}\n"
+                f"状态码: {response.status}"
+            )
+            return None
+
+        try:
+            text = await response.text(errors="ignore")
+            try:
+                tree = etree.HTML(text)
+                response.tree = tree
+            except etree.ParserError as e:
+                self.logger.error(
+                    f"HTML解析失败: {url}\n"
+                    f"状态码: {response.status}\n"
+                    f"Error: {str(e)}"
+                )
+                response.tree = None
+            return response
+
+        except UnicodeDecodeError as e:
+            self.logger.error(
+                f"Unicode解码错误: {url}\n"
+                f"Error: {str(e)}"
+            )
+            return None
+
+    async def get_eith_retry(
+        self,
+        url: str,
+        retry_times: int = 3,
+        retry_interval: float = 1.0,
+        retry_on: Optional[Callable[[Exception], bool]] = None,
+        **kwargs,
+    ):
+        """
+        重试机制 get 请求
+
+        Args:
+            url: 请求 URL
+            retry_times: 最大重试次数
+            retry_interval: 重试间隔
+            retry_on: 重试条件函数
+            **kwargs: 其他 aiohttp.ClientSession.get() 参数
+
+        Returns:
+            Optional[Any]: 请求响应
+
+        Raises:
+            RequestError: 重试机制中发生 HTTP 错误
+        """
+        last_error = None
+
+        for attempt in range(retry_times + 1):
+            try:
+                response = await self.get(url, **kwargs)
+                if response:
+                    return response
+
+            except Exception as e:
+                last_error = e
+                if retry_on and not retry_on(e):
+                    break
+
+                if attempt < retry_times:
+                    wait_time = retry_interval * (attempt + 1)
+                    self.logger.warning(
+                        f"请求失败,{wait_time}秒后重试 ({attempt + 1}/{retry_times})\n"
+                        f"URL: {url}\n"
+                        f"Error: {str(e)}"
+                    )
+                    await asyncio.sleep(wait_time)
+
+        raise RequestError(f"重试{retry_times}次后仍然失败: {str(last_error)}")
+
     async def get(
         self,
         url: str,
@@ -62,7 +190,7 @@ class WebRequest:
         **kwargs,
     ) -> Optional[Any]:
         """
-        通用网络请求方法
+        异步 get 请求
 
         Args:
             url: 请求地址
@@ -72,7 +200,7 @@ class WebRequest:
             **kwargs: 其他 aiohttp.ClientSession.get() 参数
 
         Returns:
-            Response 对象 or None
+            Optional[Any]: 请求响应
         """
         # 合并请求头
         request_headers = self.default_headers.copy()
@@ -93,41 +221,7 @@ class WebRequest:
                 allow_redirects=True,  # 允许重定向
                 **kwargs,
             ) as response:
-                # 检查响应状态
-                if response.status >= 400:
-                    self.logger.warning(
-                        f"请求失败: {url}\n"
-                        f"状态码: {response.status}\n"
-                        f"代理: {proxy or '无'}"
-                    )
-                    return None
-
-                try:
-                    text = await response.text(
-                        errors="ignore"
-                    )  # 异步获取 text 响应; errors='ignore' 忽略解码错误;
-
-                    # html 解析
-                    try:
-                        tree = etree.HTML(text)  # lxml 解析
-                        response.tree = tree
-                    except etree.ParserError as e:
-                        self.logger.error(
-                            f"HTML 解析失败: {url}\n"
-                            f"状态码: {response.status}\n"
-                            f"代理: {proxy or '无'}\n"
-                            f"Error: {str(e)}"
-                        )
-                        response.tree = None
-
-                    return response
-                except UnicodeDecodeError as e:
-                    self.logger.error(
-                        f"Unicode 解码错误: {url}\n"
-                        f"代理: {proxy or '无'}\n"
-                        f"Error: {str(e)}"
-                    )
-                    return None
+                return await self._process_response(response, url)
 
         except aiohttp.ClientError as e:
             self.logger.error(
@@ -144,9 +238,7 @@ class WebRequest:
             return None
 
     async def close(self):
-        """
-        关闭 aiohttp session
-        """
+        """ 关闭 aiohttp 会话 """
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
@@ -158,6 +250,8 @@ class WebRequest:
         Returns:
             self: 自身
         """
+        if self._session is None:
+            self._session = self._get_session()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -173,6 +267,12 @@ class WebRequest:
             bool: 关闭 aiohttp session 结果
         """
         await self.close()
+        if exc_type:
+            self.logger.error(
+                f"上下文管理器异常:\n"
+                f"Type: {exc_type.__name__}\n"
+                f"Value: {str(exc_val)}"
+            )
 
 
 if __name__ == "__main__":

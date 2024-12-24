@@ -179,6 +179,16 @@ class RedisError(ProxyPoolError):
         )
 
 
+class RequestError(Exception):
+    """ 请求异常基类 """
+    pass
+
+
+class ProxyError(RequestError):
+    """ 代理相关异常 """
+    pass
+
+
 def handle_exception(e: Exception) -> Dict[str, Any]:
     """
     统一异常处理
