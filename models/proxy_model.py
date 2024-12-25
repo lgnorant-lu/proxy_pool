@@ -69,6 +69,7 @@ class ProxyModel:
     last_success_time: Optional[datetime] = None
     response_times: List[float] = field(default_factory=list)
     max_response_times: int = 100  # 保存最近 100 次响应时间
+    fail_count: Optional[int] = None
 
     def __post_init__(self):
         """ 验证初始化参数 """
