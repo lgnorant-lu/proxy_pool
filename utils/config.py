@@ -94,6 +94,9 @@ class ProxyConfig:
     FETCH_BATCH_SIZE: int = field(default=20)
     MAX_FETCHERS: int = field(default=5)
 
+    def __init__(self):
+        self.verify_proxy = True
+
     def __post_init__(self):
         """初始化后验证和环境变量处理"""
         self._load_from_env()

@@ -14,7 +14,7 @@ Changed history:            网络请求模块: 代理源
 
 import aiohttp
 # import asyncio
-from aiohttp import ClientTimeout, TCPConnector
+from aiohttp import ClientTimeout, TCPConnector, ClientSession
 from lxml import etree
 from typing import Optional, Any, Union, Callable
 from proxy_pool.utils.logger import setup_logger
@@ -26,17 +26,19 @@ class WebRequest:
     网络请求模块， aiohttp 异步实现
 
     功能：
-    1. 异步HTTP请求
+    1. 异步 HTTP 请求
     2. 自动重试机制
     3. 代理支持
-    4. HTML解析
+    4. HTML 解析
     5. 异步上下文管理
     """
 
     def __init__(self):
         """ 初始化 WebRequest 实例 """
         self.logger = setup_logger()
-        self._session = None
+        self.session = None
+        self.connector = None
+        self.closed = False
         self.default_headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -50,22 +52,36 @@ class WebRequest:
             "Accept-Language": "zh-CN,zh;q=0.8,en;q=0.6",
         }
 
-    def _get_session(self) -> aiohttp.ClientSession:
+    async def get_session(self) -> aiohttp.ClientSession:
         """
         获取 / 创建 session
 
         Returns:
             aiohttp.ClientSession: 会话实例
         """
-        if self._session is None or self._session.closed:
-            connector = TCPConnector(
-                ssl=False,  # 关闭 SSL/TLS 验证
-                force_close=True,  # 开启 TCP 连接
-                limit=100,  # 并发连接池大小
-                ttl_dns_cache=300,  # DNS 缓存时间
+        if self.closed:
+            self.closed = False
+            self.session = None
+            self.connector = None
+
+        if self.session is None or self.session.closed:
+            if self.connector is None or self.connector.closed:
+                self.connector = TCPConnector(
+                    ssl=False,  # 关闭 SSL/TLS 验证
+                    # force_close=True,  # 开启 TCP 连接
+                    limit=100,  # 并发连接池大小
+                    # limit_per_host=10,  # 并发连接数
+                    ttl_dns_cache=300,  # DNS 缓存时间
+                )
+            self.session = ClientSession(
+                connector=self.connector,
+                timeout=aiohttp.ClientTimeout(total=30),  # 默认超时
             )
-            self._session = aiohttp.ClientSession(connector=connector)
-        return self._session
+
+        if self.session is None:
+            raise ValueError("ClientSession 创建失败, 麻麻的")
+
+        return self.session
 
     @staticmethod
     def _get_timeout(timeout: Union[float, ClientTimeout]) -> ClientTimeout:
@@ -133,7 +149,30 @@ class WebRequest:
             )
             return None
 
-    async def get_eith_retry(
+    async def check_url(self, url: str, timeout: int = 5) -> bool:
+        """ 检查 URL 是否可访问 """
+        try:
+            session = await self.get_session()
+            async with session.head(
+                    url,
+                    timeout=timeout,
+                    allow_redirects=True
+            ) as response:
+                return response.status == 200
+        except Exception as e:
+            self.logger.debug(f"URL检查失败 {url}: {e}")
+            return False
+
+    async def request(self, method: str, url: str, **kwargs) -> Optional[aiohttp.ClientResponse]:
+        """ 发送请求 """
+        session = await self.get_session()
+        try:
+            return await session.request(method, url, **kwargs)
+        except Exception as e:
+            self.logger.error(f"请求失败 (web_request) : {str(e)}")
+            return None
+
+    async def get_with_retry(
         self,
         url: str,
         retry_times: int = 3,
@@ -212,7 +251,7 @@ class WebRequest:
             timeout = ClientTimeout(total=float(timeout))
 
         try:
-            session = self._get_session()
+            session = await self.get_session()
             async with session.get(
                 url,
                 headers=request_headers,
@@ -238,10 +277,17 @@ class WebRequest:
             return None
 
     async def close(self):
-        """ 关闭 aiohttp 会话 """
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        """ 关闭 aiohttp 会话和 connector 连接器  """
+        try:
+            self.closed = True
+            if self.session and not self.session.closed:
+                await self.session.close()
+            if self.connector and not self.connector.closed:
+                await self.connector.close()
+            # self.session = None
+            # self.connector = None
+        except Exception as e:
+            self.logger.error(f"aiohttp 关闭会话和 connector 连接器时发生错误: {str(e)}")
 
     async def __aenter__(self):
         """
@@ -250,8 +296,8 @@ class WebRequest:
         Returns:
             self: 自身
         """
-        if self._session is None:
-            self._session = self._get_session()
+        if self.session is None:
+            self.session = await self.get_session()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
