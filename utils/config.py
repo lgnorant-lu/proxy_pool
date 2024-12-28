@@ -12,6 +12,7 @@ Changed history:            初始化配置文件,定义系统全局配置
 """
 
 import os
+from pydantic_settings import BaseSettings
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Dict, List
 from pathlib import Path
@@ -20,6 +21,38 @@ import yaml
 
 from proxy_pool.utils.exceptions import ConfigError
 from proxy_pool.utils.logger import setup_logger
+
+
+class Settings(BaseSettings):
+    """ 应用配置 """
+    # Redis配置
+    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_KEY_PREFIX: str = "proxy:"
+
+    # 代理池配置
+    FETCH_INTERVAL: int = 300
+    PROXY_SCORE_MAX: int = 100
+    PROXY_SCORE_MIN: int = 0
+    PROXY_SCORE_INIT: int = 10
+
+    # API服务配置
+    API_PORT: int = 5010
+
+    # 验证配置
+    VALIDATE_TIMEOUT: int = 10
+    VALIDATE_BATCH_SIZE: int = 100
+
+    # 清理配置
+    CLEAN_INTERVAL: int = 1800
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
+
+
+# 全局配置实例
+settings = Settings()
+
 
 logger = setup_logger()
 

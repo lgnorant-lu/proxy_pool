@@ -45,14 +45,11 @@ class ProxyCleaner:
             # 获取所有代理, 加上 await 处理异步方法
             all_proxies_str = await self.storage.get_all_proxies()
 
-            # 转换 str 列表为 ProxyModel 列表
-            all_proxies = self.fetcher.parse_proxy_list(all_proxies_str)
-
             # 代理有效性验证, 有效代理获取
-            valid_proxies = await self.validator.validate_proxy(all_proxies)
+            valid_proxies = await self.validator.validate_proxy(all_proxies_str)
 
             # 无效代理差集获取
-            invalid_proxies = [proxy for proxy in all_proxies if proxy not in valid_proxies]
+            invalid_proxies = [proxy for proxy in all_proxies_str if proxy not in valid_proxies]
 
             # 批量移除无效代理
             for proxy in invalid_proxies:

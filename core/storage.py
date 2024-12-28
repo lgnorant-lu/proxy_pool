@@ -13,7 +13,7 @@ Changed history:            重构 Redis 存储逻辑,增强代理存储管理
 
 # import aioredis  # 3.11 兼容 bug
 import redis
-# import asyncio  # 结合 redis 实现同 aioreis 的异步功能
+# import asyncio  # 结合 redis 实现同 aioredis 的异步功能
 import random
 import json
 from datetime import datetime
@@ -21,10 +21,15 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Optional, Union, List, Dict, Any
 
-from proxy_pool.utils.config import ProxyConfig
+from proxy_pool.utils.config import ProxyConfig, Settings
 # from proxy_pool.utils.exceptions import ProxyPoolError
 from proxy_pool.utils.logger import setup_logger
 from proxy_pool.models.proxy_model import ProxyModel
+
+
+settings = Settings()
+
+logger = setup_logger()
 
 
 class RedisConnectionPool:
@@ -119,11 +124,18 @@ class RedisProxyClient:
         Args:
             config: 配置参数
         """
+        self.logger = logger
         self._config = config
         self._logger = setup_logger()
         self._pool = RedisConnectionPool(config)
         self._serializer = ProxySerializer()
         self.executor = ThreadPoolExecutor()
+        self.pool = redis.ConnectionPool.from_url(
+            settings.REDIS_URL,
+            decode_responses=True  # 自动解码响应
+        )
+        self.redis = redis.Redis(connection_pool=self.pool)
+        self.key_prefix = settings.REDIS_KEY_PREFIX
 
     async def _run_sync(self, func, *args):
         """
@@ -138,6 +150,27 @@ class RedisProxyClient:
         """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self.executor, func, *args)
+
+    def close(self):
+        """ 关闭连接池 """
+        try:
+            if self.redis:
+                self.redis.close()
+        except Exception as e:
+            self.logger.error(f"关闭 Redis 连接池失败: {e}")
+
+    @contextmanager
+    def pipeline(self):
+        """ Redis管道上下文管理器 """
+        pipe = self.redis.pipeline()
+        try:
+            yield pipe
+            pipe.execute()
+        except Exception as e:
+            logger.error(f"Redis 管道操作失败: {e}")
+            raise
+        finally:
+            pipe.reset()
 
     async def add(self, proxy: Union[str, ProxyModel], score: Optional[float] = None) -> bool:
         """
